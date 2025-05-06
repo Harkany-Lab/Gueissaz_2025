@@ -1,0 +1,744 @@
+---
+title: "Metabolic genes expression analysis of Young Mice Hypothalamus with focus on PVN (intersection sets)"
+authors:
+  - name: Evgenii O. Tretiakov, PhD
+    affiliation:
+      - Department of Molecular Neurosciences, Center for Brain Research, Medical University of Vienna, Vienna A-1090, Austria
+    roles:
+      - Conceptualization
+      - Formal analysis
+      - Data curation
+      - Investigation
+      - Methodology
+      - Software
+      - Visualization
+      - Resources
+      - Writing
+    corresponding: true
+    orcid: 0000-0001-5920-2190
+    email: evgenii.tretiakov@meduniwien.ac.at
+  - name: Tibor Harkany, PhD
+    affiliation:
+      - Department of Molecular Neurosciences, Center for Brain Research, Medical University of Vienna, Vienna A-1090, Austria
+      - Division of Molecular and Cellular Neuroendocrinology, Department of Neuroscience, Biomedicum 7D, Karolinska Institutet, Solna SE-17165, Sweden
+    roles:
+      - Conceptualization
+      - Funding acquisition
+      - Resources
+      - Supervision
+      - Project administration
+      - Writing
+    corresponding: true
+    orcid: 0000-0002-6637-5900
+    email: tibor.harkany@meduniwien.ac.at
+date: "`r Sys.Date()`"
+format:
+  html:
+    default: true
+    toc: true
+    df-print: paged
+    code-fold: true
+    fig-width: 9
+    fig-height: 12
+    fig-format: retina
+    fig-responsive: true
+    fig-dpi: 300
+    embed-resources: true
+  pdf:
+    default: true
+    colorlinks: true
+    fontsize: 12pt
+execute:
+  keep-md: true
+  echo: true
+  error: false
+  message: false
+  warning: false
+  debug: false
+knitr:
+  opts_chunk:
+    autodep: true
+    fig.align: center
+    fig.retina: 2
+    fig.width: 14
+    fig.height: 12
+bibliography: references.bib
+---
+
+```{r}
+#| label: setup
+#| include: false
+DOCNAME <- "metabolic-and-opioids-in-pvn-neurons"
+NOW <- Sys.time()
+
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::knit_hooks$set(debug = function(before, options, envir) {
+  if (!before) {
+    message(
+      paste(names(envir), as.list(envir), sep = " = ", collapse = "\n")
+    )
+  }
+})
+
+knitr::opts_chunk$set(
+  warning = FALSE,
+  cache = FALSE,
+  dev = c("png", "pdf"),
+  timeit = TRUE
+)
+```
+
+## Setup parameters
+
+```{r}
+#| label: libraries
+#| cache: false
+# Load tidyverse infrastructure packages
+suppressPackageStartupMessages({
+  library(future)
+  library(here)
+  library(tidyverse)
+  library(magrittr)
+  library(stringr)
+  library(skimr)
+  library(RColorBrewer)
+  library(viridis)
+})
+
+
+# Load packages for scRNA-seq analysis and visualisation
+suppressPackageStartupMessages({
+  library(UpSetR)
+  library(ggplot2)
+  library(cowplot)
+  library(patchwork)
+  library(ggstatsplot)
+  library(Seurat)
+  library(SeuratWrappers)
+  library(scCustomize)
+})
+```
+
+### Set paths
+
+```{r}
+#| label: paths
+src_dir <- here("code")
+data_dir <- here("data")
+output_dir <- here("output")
+```
+
+### Load gene-sets
+
+```{r}
+#| label: source
+#| cache: false
+source(here(src_dir, "genes.R"))
+```
+
+### Set fixed variables
+
+```{r}
+#| label: params-computation
+#| cache: false
+# set seed
+reseed <- 42
+set.seed(seed = reseed)
+
+# Parameters for parallel execution
+n_cores <- min(parallelly::availableCores() / 2 - 1, 16)
+plan("multisession", workers = n_cores)
+options(
+  future.globals.maxSize = 100000 * 1024^2,
+  future.rng.onMisuse = "ignore"
+)
+plan()
+
+
+# ggplot2 theme
+theme_set(ggmin::theme_powerpoint())
+```
+
+```{r}
+#| label: params
+bioproject <- "PRJNA547712"
+project <- "kim2020_Hypoth-dev"
+cb_fpr <- 0.001
+low_cutoff_gene <- 500
+high_cutoff_gene <- NULL
+high_cutoff_gene <- 5000
+low_cutoff_umis <- NULL
+low_cutoff_umis <- -Inf
+high_cutoff_umis <- 25000
+high_cutoff_pc_mt <- 15
+high_cutoff_pc_ribo <- 20
+high_cutoff_pc_hb <- 0.1
+high_cutoff_doublet_score <- 0.33
+high_cutoff_complexity <- 0.85
+connectivity_model <- "min_tree"
+k <- 10
+metric <- "euclidean"
+signature <- 100
+```
+
+```{r}
+#| label: opioid-system-genes
+opioid_system_genes <- c(
+  # Classical opioid receptors
+  "Oprd1", # Delta opioid receptor
+  "Oprk1", # Kappa opioid receptor
+  "Oprl1", # Nociceptin/orphanin FQ receptor
+  "Oprm1", # Mu opioid receptor
+
+  # Processing enzymes
+  "Pcsk1", # Proprotein convertase 1
+  "Pcsk2", # Proprotein convertase 2
+
+  # Endogenous opioid precursors
+  "Pdyn", # Prodynorphin
+  "Penk", # Proenkephalin
+  # "Pomc",   # Proopiomelanocortin
+  "Pnoc" # Prepronociceptin
+)
+```
+
+```{r}
+#| label: metabolic-signaling-genes
+metabolic_signaling_genes <- c(
+  # Receptor tyrosine kinases and ligands
+  "Alk", # Anaplastic lymphoma kinase - neural development, metabolism
+  "Fam150a", # ALK ligand 1/Augmentor-β - ALK receptor activator
+  "Fam150b", # ALK ligand 2/Augmentor-α - ALK receptor activator
+
+  # Melanocortin system
+  "Mc3r", # Melanocortin 3 receptor - energy homeostasis, inflammation
+  "Mc4r", # Melanocortin 4 receptor - appetite control, energy balance
+
+  # Metabolic hormone receptors
+  "Lepr", # Leptin receptor - energy balance, satiety
+  "Insr", # Insulin receptor - glucose homeostasis
+  # "Igf1r",    # Insulin-like growth factor 1 receptor - growth, development
+
+  # Signaling adaptors/regulators
+  "Lmo4", # LIM domain only 4 - transcriptional regulation, metabolism
+  "Irs1", # Insulin receptor substrate 1 - insulin signaling
+  "Irs4" # Insulin receptor substrate 4 - insulin/leptin signaling
+)
+```
+
+## Load Kim DW et al., 2020[@kim2020]
+
+```{r}
+#| label: convert-to-seurat
+srt.kim <- schard::h5ad2seurat(
+  here(
+    data_dir,
+    "kim2020_combined.h5ad"
+  ),
+  use.raw = TRUE
+)
+
+X_umap <- srt.kim@meta.data |>
+  dplyr::select(X, Y, Z) |>
+  as.matrix()
+colnames(X_umap) <- c("UMAP_1", "UMAP_2", "UMAP_3")
+rownames(X_umap) <- colnames(srt.kim)
+srt.kim[["umap"]] <- CreateDimReducObject(
+  embeddings = X_umap,
+  key = "umap_",
+  assay = DefaultAssay(srt.kim)
+)
+srt.kim$Age %<>%
+  forcats::fct(
+    levels = c(
+      "E10",
+      "E11",
+      "E12",
+      "E13",
+      "E14",
+      "E15",
+      "E16",
+      "E17",
+      "E18",
+      "P0",
+      "P2",
+      "P4",
+      "P8",
+      "P10",
+      "P14",
+      "P23",
+      "P45"
+    )
+  )
+
+Idents(srt.kim) <- "Age"
+srt.kim <- Store_Palette_Seurat(
+  seurat_object = srt.kim,
+  palette = rev(brewer.pal(n = 11, name = "Spectral")),
+  palette_name = "expr_Colour_Pal"
+)
+```
+
+## Load Romanov et al., 2020[@romanov2020]
+
+```{r}
+#| label: load-seurat
+print(srt.kim)
+srt.romanov.pub <- readRDS("/data/PRJNA548917/old/oldCCA_nae_srt.rds")
+srt.romanov.pub <- UpdateSeuratObject(srt.romanov.pub)
+Idents(srt.romanov.pub) <-
+  factor(srt.romanov.pub$wtree, ordered = TRUE)
+
+# Consistent colours and clusters names
+colours_wtree <- setNames(read_lines(here(data_dir, "colours_wtree.tsv")), 1:45)
+
+srt.romanov.pub$age <-
+  Cells(srt.romanov.pub) |>
+  str_split(pattern = ":", simplify = T) %>%
+  .[, 1] %>%
+  str_split_fixed(pattern = "_", n = 3) %>%
+  .[, 3]
+print(srt.romanov.pub)
+glimpse(srt.romanov.pub@meta.data)
+table(Idents(srt.romanov.pub))
+
+srt.romanov.pub %<>% RenameIdents(object = ., `43` = "mneOXY")
+srt.romanov.pub %<>% RenameIdents(object = ., `26` = "mneVAS")
+srt.romanov.pub %<>% RenameIdents(object = ., `31` = "pneSS")
+srt.romanov.pub %<>% RenameIdents(object = ., `24` = "pneCRH")
+srt.romanov.pub %<>% RenameIdents(object = ., `15` = "pneTRH")
+```
+
+```{r}
+#| label: n-cells-by-age-all
+srt.romanov.pub$stage <-
+  srt.romanov.pub$age %>%
+  forcats::fct_collapse(
+    Embryonic = c("E15", "E17"),
+    Neonatal = c("P0", "P2", "3P2"),
+    Pubertal = c("1P10", "P10"),
+    Adult = c("P23")
+  )
+srt.romanov.pub$stage %<>%
+  factor(
+    levels = c("Embryonic", "Neonatal", "Pubertal", "Adult"),
+    ordered = TRUE
+  )
+srt.romanov.pub$stage %>% forcats::fct_count()
+```
+
+```{r}
+#| label: correct-age-labels
+srt.romanov.pub$age <-
+  plyr::mapvalues(
+    x = srt.romanov.pub$age,
+    from = c("E15", "E17", "P0", "P2", "3P2", "1P10", "P10", "P23"),
+    to = c("E15", "E17", "P00", "P02", "P02", "P10", "P10", "P23")
+  )
+srt.romanov.pub$age %>% forcats::fct_count()
+```
+
+## Prepare query mapping between datasets
+
+```{r}
+#| label: norm-scale-matrix
+srt.kim <- NormalizeData(srt.kim)
+srt.kim <- FindVariableFeatures(
+  srt.kim,
+  selection.method = "vst",
+  nfeatures = 3000
+)
+# all.genes <- rownames(srt.kim)
+# srt.kim <- ScaleData(srt.kim, features = all.genes)
+srt.kim <- ScaleData(srt.kim)
+```
+
+```{r}
+#| label: transfer-annotations
+hypoth.anchors <- FindTransferAnchors(
+  reference = srt.romanov.pub,
+  query = srt.kim,
+  dims = 1:30,
+  reference.reduction = "pca"
+)
+predictions <- TransferData(
+  anchorset = hypoth.anchors,
+  refdata = srt.romanov.pub$wtree,
+  dims = 1:30
+)
+srt.kim <- AddMetaData(srt.kim, metadata = predictions)
+table(srt.kim$predicted.id)
+```
+
+```{r}
+#| label: transfer-umap
+srt.romanov.pub <- RunUMAP(
+  srt.romanov.pub,
+  dims = 1:30,
+  reduction = "pca",
+  return.model = TRUE
+)
+srt.kim <- IntegrateEmbeddings(
+  anchorset = hypoth.anchors,
+  reference = srt.romanov.pub,
+  query = srt.kim,
+  new.reduction.name = "ref.pca"
+)
+srt.kim <- ProjectUMAP(
+  query = srt.kim,
+  query.reduction = "ref.pca",
+  reference = srt.romanov.pub,
+  reference.reduction = "pca",
+  reduction.model = "umap"
+)
+Idents(srt.kim) <- srt.kim$Cluster
+```
+
+```{r}
+all.genes <- rownames(srt.kim)
+gene.scale <- c(
+  cnbn,
+  opioid_system_genes,
+  metabolic_signaling_genes,
+  np,
+  npr,
+  nmr,
+  neurotrans
+) |>
+  unique() %>%
+  .[. %in% all.genes]
+```
+
+```{r}
+#| label: stage-kim2020-np
+srt.kim$stage <-
+  srt.kim$Age %>%
+  forcats::fct_collapse(
+    Embryonic = c(
+      "E10",
+      "E11",
+      "E12",
+      "E13",
+      "E14",
+      "E15",
+      "E16",
+      "E18"
+    ),
+    Neonatal = c("P4", "P8"),
+    Pubertal = c("P14"),
+    Adult = c("P45")
+  )
+srt.kim$stage %<>%
+  factor(
+    levels = c("Embryonic", "Neonatal", "Pubertal", "Adult"),
+    ordered = TRUE
+  )
+```
+
+```{r}
+#| label: selection-of-pvn-neurons
+selected_cells <- read_lines(here(data_dir, "kim2020_pvn_neurons.txt"))
+srt.kim <- subset(
+  srt.kim,
+  cells = c(
+    selected_cells,
+    WhichCells(
+      srt.kim,
+      expression = (Crh > 0 & (Scgn > 0 | Alk > 0 | Fam150b > 0 | Fam150a > 0))
+    )
+  )
+)
+# srt.kim <- subset(srt.kim, subset = refUMAP_1 > 4 & refUMAP_2 > -1)
+
+srt.kim@meta.data <- srt.kim@meta.data |>
+  dplyr::rename(wtree = predicted.id, age = Age)
+
+srt.kim <- subset(srt.kim, subset = stage %in% c("Pubertal", "Adult"))
+
+srt.kim
+```
+
+We subset Kim et al., 2020 dataset to only Pubertal and Adult stages.
+
+## Intersection sets analysis
+
+### PVN Neurons from Kim et al. 2020, Nature Communications
+
+```{r}
+#| label: e-metabolic-representation-kim2020-pvn
+sbs_mtx <-
+  srt.kim@assays$RNA@data %>%
+  as.data.frame() %>%
+  t()
+
+rownames(sbs_mtx) <- colnames(srt.kim)
+colnames(sbs_mtx) <- rownames(srt.kim)
+
+# Filter features
+filt_low_genes <-
+  colSums(sbs_mtx) %>%
+  .[. > quantile(., 0.4)] %>%
+  names()
+sbs_mtx %<>% .[, filt_low_genes]
+
+min_filt_vector2 <-
+  sbs_mtx %>%
+  as_tibble() %>%
+  dplyr::select(all_of(filt_low_genes)) %>%
+  summarise(across(.fns = ~ quantile(.x, .005))) %>%
+  as.list() %>%
+  map(as.double) %>%
+  simplify() %>%
+  .[filt_low_genes]
+
+# Prepare table of intersection sets analysis
+content_sbs_mtx_kim <-
+  (sbs_mtx > min_filt_vector2) %>%
+  as_tibble() %>%
+  mutate_all(as.numeric) %>%
+  bind_cols(
+    srt.kim@meta.data |> dplyr::select(wtree, age, stage)
+  )
+```
+
+### PVN Neurons from Romanov et al. 2020, Nature
+
+```{r}
+#| label: subset-pvn
+srt.romanov.pvn <-
+  subset(
+    x = srt.romanov.pub,
+    cells = unique(c(
+      WhichCells(
+        srt.romanov.pub,
+        idents = c(
+          "mneOXY",
+          "mneVAS",
+          "pneSS",
+          "pneCRH",
+          "pneTRH"
+        )
+      ),
+      WhichCells(
+        srt.romanov.pub,
+        expression = (Crh > 0 &
+          (Scgn > 0 | Alk > 0 | Fam150b > 0 | Fam150a > 0))
+      )
+    )),
+    invert = FALSE
+  )
+
+table(srt.romanov.pvn$age)
+table(srt.romanov.pvn$stage)
+
+srt.romanov.pvn <- subset(
+  srt.romanov.pvn,
+  subset = stage %in% c("Pubertal", "Adult")
+)
+```
+
+We subset Romanov et al., 2020 dataset to only Pubertal and Adult
+stages.
+
+```{r}
+#| label: after-subset-romanov2020-pvn
+table(srt.romanov.pvn$age)
+table(srt.romanov.pvn$stage)
+```
+
+```{r}
+#| label: e-metabolic-representation-romanov2020-pvn
+sbs_mtx <-
+  srt.romanov.pvn@assays$RNA@data %>%
+  as.data.frame() %>%
+  t()
+
+# Filter features
+filt_low_genes <-
+  colSums(sbs_mtx) %>%
+  .[. > quantile(., 0.4)] %>%
+  names()
+sbs_mtx %<>% .[, c("Fam150b", filt_low_genes)]
+
+min_filt_vector2 <-
+  sbs_mtx %>%
+  as_tibble() %>%
+  dplyr::select(all_of(c("Fam150b", filt_low_genes))) %>%
+  summarise(across(.fns = ~ quantile(.x, .005))) %>%
+  as.list() %>%
+  map(as.double) %>%
+  simplify() %>%
+  .[c("Fam150b", filt_low_genes)]
+
+# Prepare table of intersection sets analysis
+content_sbs_mtx_romanov <-
+  (sbs_mtx > min_filt_vector2) %>%
+  as_tibble() %>%
+  mutate_all(as.numeric) %>%
+  bind_cols(
+    srt.romanov.pvn@meta.data |> dplyr::select(wtree, age, stage)
+  )
+```
+
+### PVN Neurons from both datasets joined
+
+```{r}
+#| label: e-metabolic-representation-pvn
+# Prepare table of intersection sets analysis
+to_select <-
+  c(gene.scale, "wtree", "age", "stage") %>%
+  .[. %in% colnames(content_sbs_mtx_kim)] %>%
+  .[. %in% colnames(content_sbs_mtx_romanov)]
+
+content_sbs_mtx <-
+  bind_rows(
+    content_sbs_mtx_kim |> dplyr::select(all_of(to_select)),
+    content_sbs_mtx_romanov |> dplyr::select(all_of(to_select))
+  )
+```
+
+```{r}
+#| label: fig-upset-group-metabolic-pvn-f1d
+#| fig-height: 24
+#| fig-width: 36
+
+metabolic_signaling_genes <- c(
+  "Alk",
+  "Fam150a",
+  "Fam150b",
+  "Mc3r",
+  "Mc4r",
+  "Lepr",
+  "Insr",
+  "Lmo4",
+  "Irs1",
+  "Irs4"
+)
+
+# 1. Prepare the data for the UpSet plot (specifically for Pubertal stage)
+data_for_upset_pubertal <- content_sbs_mtx |>
+  dplyr::filter(stage == "Pubertal") |>
+  # Select the genes of interest, including Fam150b via metabolic_signaling_genes
+  dplyr::select(dplyr::any_of(c(
+    metabolic_signaling_genes,
+    "Crh",
+    "Trh",
+    "Oxt"
+  ))) |>
+  # IMPORTANT: This step removes any gene column that has no expressing cells in this subset
+  dplyr::select(dplyr::where(~ is.numeric(.x) && sum(.x, na.rm = TRUE) > 0))
+
+# Convert to a standard data frame for UpSetR
+data_for_upset_pubertal_df <- as.data.frame(data_for_upset_pubertal)
+
+# 2. Check if Fam150b is present after filtering
+if ("Fam150b" %in% colnames(data_for_upset_pubertal_df)) {
+  cat("Fam150b is present in the data for the UpSet plot.\n")
+  cat(
+    "Number of cells expressing Fam150b in Young mice hypothalamic neurons (after binarization):",
+    sum(data_for_upset_pubertal_df$Fam150b, na.rm = TRUE),
+    "\n"
+  )
+} else {
+  cat("Fam150b is NOT present in the data for the UpSet plot.\n")
+  cat(
+    "This means no cells in the Young stage expressed Fam150b. \n"
+  )
+
+  # Optional: Check Fam150b in the original Pubertal subset before the sum filter
+  pubertal_subset_before_sum_filter <- content_sbs_mtx |>
+    dplyr::filter(stage == "Pubertal") |>
+    dplyr::select(dplyr::any_of("Fam150b"))
+
+  if ("Fam150b" %in% colnames(pubertal_subset_before_sum_filter)) {
+    cat(
+      "Original expression of Fam150b in Young mice hypothalamic neurons (sum after binarization):",
+      sum(pubertal_subset_before_sum_filter$Fam150b, na.rm = TRUE),
+      "\n"
+    )
+  } else {
+    cat(
+      "Fam150b was not even found in the selection from content_sbs_mtx for Young mice hypothalamic neurons.\n"
+    )
+  }
+}
+
+# 3. Generate the UpSet plot using the prepared and filtered data
+# The 'sets' argument should dynamically get column names from the prepared data.
+if (
+  ncol(data_for_upset_pubertal_df) > 0 && nrow(data_for_upset_pubertal_df) > 0
+) {
+  upset(
+    data_for_upset_pubertal_df,
+    # --- Ordering and Filtering ---
+    order.by = "freq", # Order intersections by frequency (size)
+    # keep.order = TRUE, # If you want to maintain the order of sets as in 'sets' argument
+    nsets = 30, # Max number of sets to display in the matrix
+    nintersects = 100, # Max number of intersections to display
+    # cutoff = 1,        # Minimum size of an intersection to be shown
+
+    # --- Aesthetics: Colors and Points/Lines ---
+    main.bar.color = "gray20", # Color of the main intersection size bars
+    sets.bar.color = "black", # Color of the set size bars on the left
+    matrix.color = "red", # Color of the lines connecting the dots in the matrix
+    matrix.dot.alpha = 0.5, # Transparency of the dots (0=transparent, 1=opaque)
+    # The example shows solid dots, so alpha close to 1.
+    # Note: matrix.color might also affect dot color if specific dot color param is not available or used.
+    # UpsetR's parameters can sometimes be a bit tricky.
+    shade.color = "gray80", # Color of the shading for row highlighting (if enabled)
+    shade.alpha = 0.25, # Transparency of the shading
+
+    # --- Aesthetics: Points and Lines ---
+    point.size = 10.0, # Size of the dots in the matrix (adjust as needed)
+    line.size = 4.0, # Thickness of the lines in the matrix (adjust as needed)
+
+    # --- Text and Labels ---
+    sets.x.label = "Number of cells", # Label for the set size bars
+    mainbar.y.label = "Intersection size", # Label for the main intersection size bars
+    text.scale = c(
+      intersection_size_title = 4.0, # Scales various text elements
+      intersection_size_tick_labels = 3.5,
+      set_size_title = 4.0,
+      set_size_tick_labels = 3.5,
+      set_names = 3.8, # Size of the set names (gene names)
+      numbers_above_bars = 3.0 # Size of numbers above intersection bars
+    ),
+    number.angles = 0, # Angle of the numbers above intersection bars
+
+    # --- Matrix Configuration ---
+    show.numbers = "yes", # Show numbers above intersection bars ("no" to hide)
+
+    # --- Set Configuration ---
+    sets = colnames(data_for_upset_pubertal_df), # Explicitly define the sets from your data
+    empty.intersections = NULL,
+
+    # --- Layout Ratio ---
+    mb.ratio = c(0.70, 0.30) # Ratio height_of_main_bar_plot / height_of_matrix (manual default)
+  )
+} else {
+  cat(
+    "The data frame for the UpSet plot is empty (either no rows or no columns after filtering).\n"
+  )
+  cat("Number of rows:", nrow(data_for_upset_pubertal_df), "\n")
+  cat("Number of columns:", ncol(data_for_upset_pubertal_df), "\n")
+}
+
+
+# 4. Display skim output for the data being plotted
+print(skim(data_for_upset_pubertal_df))
+```
+
+```{r}
+#| label: session-info
+sessioninfo::session_info()
+```

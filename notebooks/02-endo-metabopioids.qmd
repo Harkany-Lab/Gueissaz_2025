@@ -2,9 +2,9 @@
 title: "Metabolic and opioid system expression analysis of Pubertal and Adult Hypothalamus with focus on PVN"
 authors:
   - name: Evgenii O. Tretiakov, PhD
-    affiliation: 
+    affiliation:
       - Department of Molecular Neurosciences, Center for Brain Research, Medical University of Vienna, Vienna A-1090, Austria
-    roles: 
+    roles:
       - Conceptualization
       - Formal analysis
       - Data curation
@@ -18,10 +18,10 @@ authors:
     orcid: 0000-0001-5920-2190
     email: evgenii.tretiakov@meduniwien.ac.at
   - name: Tibor Harkany, PhD
-    affiliation: 
+    affiliation:
       - Department of Molecular Neurosciences, Center for Brain Research, Medical University of Vienna, Vienna A-1090, Austria
       - Division of Molecular and Cellular Neuroendocrinology, Department of Neuroscience, Biomedicum 7D, Karolinska Institutet, Solna SE-17165, Sweden
-    roles: 
+    roles:
       - Conceptualization
       - Funding acquisition
       - Resources
@@ -33,7 +33,7 @@ authors:
     email: tibor.harkany@meduniwien.ac.at
 date: "`r Sys.Date()`"
 format:
-  html: 
+  html:
     default: true
     toc: true
     df-print: paged
@@ -44,7 +44,7 @@ format:
     fig-responsive: true
     fig-dpi: 300
     embed-resources: true
-  pdf: 
+  pdf:
     default: true
     colorlinks: true
     fontsize: 12pt
@@ -148,7 +148,7 @@ tables_dir <- here(output_dir, "tables/")
 #| label: source
 #| cache: false
 source(here(src_dir, "genes.R"))
-source(here(src_dir, "functions.R"))
+# source(here(src_dir, "functions.R"))
 ```
 
 ### Set fixed variables
@@ -230,14 +230,14 @@ metabolic_signaling_genes <- c(
   "Mc4r", # Melanocortin 4 receptor - appetite control, energy balance
 
   # Metabolic hormone receptors
-  # "Lepr", # Leptin receptor - energy balance, satiety
-  # "Insr", # Insulin receptor - glucose homeostasis
+  "Lepr", # Leptin receptor - energy balance, satiety
+  "Insr", # Insulin receptor - glucose homeostasis
   # "Igf1r",    # Insulin-like growth factor 1 receptor - growth, development
 
   # Signaling adaptors/regulators
-  "Lmo4" # LIM domain only 4 - transcriptional regulation, metabolism
-  # "Irs1", # Insulin receptor substrate 1 - insulin signaling
-  # "Irs4" # Insulin receptor substrate 4 - insulin/leptin signaling
+  "Lmo4", # LIM domain only 4 - transcriptional regulation, metabolism
+  "Irs1", # Insulin receptor substrate 1 - insulin signaling
+  "Irs4" # Insulin receptor substrate 4 - insulin/leptin signaling
 )
 ```
 
@@ -350,13 +350,13 @@ plotColData(sce.xu, x="altexps_ERCC_percent", y="subsets_Mito_percent", colour_b
 sce.xu <- sce.xu[ , meta_data$sample_id]
 colData(sce.xu) %<>% cbind(meta_data)
 library(scales)
-plotColData(sce.xu, x="sum", y="detected", colour_by="discard", other_fields = "core_label") + 
+plotColData(sce.xu, x="sum", y="detected", colour_by="discard", other_fields = "core_label") +
   facet_wrap(~core_label) + scale_x_continuous(labels = unit_format(unit = "k", scale = 1e-3))
 ```
 
 ```{r}
 #| label: fig-xu2020-PVN-qc-discard-batch_label
-plotColData(sce.xu, x="sum", y="detected", colour_by="discard", other_fields = "batch_label") + 
+plotColData(sce.xu, x="sum", y="detected", colour_by="discard", other_fields = "batch_label") +
   facet_wrap(~batch_label)  + scale_x_continuous(labels = unit_format(unit = "k", scale = 1e-3))
 ```
 
@@ -378,7 +378,7 @@ table(rowData(sce.xu)$discard)
 
 ```{r}
 #| label: process-xu2020-PVN-qc-discard-and-normalise
-sce.xu <- sce.xu[!rowData(sce.xu)$discard, 
+sce.xu <- sce.xu[!rowData(sce.xu)$discard,
                  !colData(sce.xu)$discard]
 
 library(scran)
@@ -442,7 +442,7 @@ genes_stk_vln_repr <- unique(c(
 plotGroupedHeatmap(
   sce.xu,
   features=genes_stk_vln_repr,
-  group=c("cluster1_label"), 
+  group=c("cluster1_label"),
   scale = F,
   center=F)
 ```
@@ -487,7 +487,7 @@ plotExpression(
   sce.xu,
   features = genes_stk_vln_repr,
   x = "cluster1_label",
-  colour_by = "cluster1_label", ncol = 4) * 
+  colour_by = "cluster1_label", ncol = 4) *
   scale_colour_discrete(type = levels(sce.xu$cluster1_color))
 ```
 
@@ -531,7 +531,7 @@ srt.xu.hvg <- srt.xu.hvg[srt.xu.hvg %in% srt.xu.keep_genes]
 
 
 srt.xu.top20 <- head(srt.xu.hvg, 20)
-srt.xu.top20 
+srt.xu.top20
 
 plot1 <- VariableFeaturePlot(srt.xu)
 LabelPoints(plot = plot1, points = srt.xu.top20, repel = TRUE, xnudge = 0, ynudge = 0)
@@ -552,7 +552,7 @@ mmus_g2m <- gorth(cc.genes.updated.2019$g2m.genes, source_organism = "hsapiens",
 srt.xu <- CellCycleScoring(srt.xu, s.features = mmus_s, g2m.features = mmus_g2m)
 table(srt.xu[[]]$Phase)
 
-VlnPlot(srt.xu, features = c("S.Score","G2M.Score"), cols = srt.xu@misc$cluster_Colour_Pal) & 
+VlnPlot(srt.xu, features = c("S.Score","G2M.Score"), cols = srt.xu@misc$cluster_Colour_Pal) &
   theme(plot.title = element_text(size=10))
 ```
 
@@ -617,7 +617,7 @@ selected_pcs <-
   seq_len(21)
 
 if (!file.exists(here(output_dir, "xu2020-metabolic-and-opioids-in-neurons-init-umap-search-ref.Rds"))) {
-  
+
   source(here(src_dir, "scDEED.R"))
   library(furrr)
 
@@ -625,7 +625,7 @@ if (!file.exists(here(output_dir, "xu2020-metabolic-and-opioids-in-neurons-init-
 
   invisible(gc())
   set.seed(reseed)
-  
+
   umap_example <- scDEED(
     input_data = srt.xu,
     K = 21,
@@ -757,7 +757,7 @@ srt.xu.markers %<>%
   dplyr::select(name, description) %>%
   right_join(srt.xu.markers, by = c("name" = "gene"))
 
-srt.xu.markers %<>% 
+srt.xu.markers %<>%
   dplyr::rename(gene = "name")
 
 xu.top_5_unique <- Extract_Top_Markers(
@@ -771,7 +771,7 @@ xu.top_5_unique
 
 
 xu.pvn.to.plot <- unique(c(
-    metabolic_signaling_genes, 
+    metabolic_signaling_genes,
     opioid_system_genes[opioid_system_genes %in% srt.xu@assays$SCT@data@Dimnames[[1]]],
     "Sim1",
     "Fos",
@@ -785,7 +785,7 @@ xu.pvn.to.plot <- unique(c(
     "Oxt",
     "Avp",
     "Sst",
-    "Cartpt", 
+    "Cartpt",
     "Adcyap1",
     "Bdnf",
     "Cck",
@@ -1084,7 +1084,7 @@ p1 + p2 + plot_layout(guides = "collect")
 #| fig-height: 24
 lopez.pvn.to.plot <- unique(c(
     "Oprd1",
-    "Cck", 
+    "Cck",
     xu.pvn.to.plot))
 
 FeaturePlot_scCustom(
@@ -1157,8 +1157,8 @@ colnames(X_umap) <- c("UMAP_1", "UMAP_2", "UMAP_3")
 rownames(X_umap) <- colnames(srt.kim)
 srt.kim[["umap"]] <- CreateDimReducObject(embeddings = X_umap, key = "umap_", assay = DefaultAssay(srt.kim))
 srt.kim$Age %<>% forcats::fct(levels = c(
-  "E10", "E11", "E12", "E13", "E14", 
-  "E15", "E16", "E17", "E18", "P0", 
+  "E10", "E11", "E12", "E13", "E14",
+  "E15", "E16", "E17", "E18", "P0",
   "P2", "P4", "P8", "P10", "P14", "P23", "P45"))
 
 Idents(srt.kim) <- "Age"
@@ -1170,7 +1170,7 @@ srt.kim <- Store_Palette_Seurat(seurat_object = srt.kim, palette = rev(brewer.pa
 ```{r}
 #| label: load-seurat
 print(srt.kim)
-srt.romanov.pub <- readRDS("/data/1_heteroAstrocytes/PRJNA548917/old/oldCCA_nae_srt.rds")
+srt.romanov.pub <- readRDS("/data/PRJNA548917/old/oldCCA_nae_srt.rds")
 srt.romanov.pub <- UpdateSeuratObject(srt.romanov.pub)
 Idents(srt.romanov.pub) <-
   factor(srt.romanov.pub$wtree,
@@ -1742,7 +1742,7 @@ srt.romanov.pvn <-
                        idents = c(
                            "mneOXY", "mneVAS",
                            "pneSS", "pneCRH", "pneTRH"
-                       )), 
+                       )),
             WhichCells(
                 srt.romanov.pub,
                 expression = (Crh > 0 & (Scgn > 0 | Alk > 0 | Fam150b > 0 | Fam150a > 0)))
